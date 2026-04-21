@@ -149,13 +149,14 @@ class BankBeesScalper:
         'volume', 'timestamp', 'bb_upper', 'bb_lower'
     }
 
-    def predict_signal(self, df_5min: pd.DataFrame) -> dict | None:
+    def predict_signal(self, df_5min: pd.DataFrame, user_qty: int = 0) -> dict | None:
         """
         Main entry point — call every time a new 5-min candle closes.
 
         Args:
-            df_5min: DataFrame with AT LEAST 30 rows of 5-min OHLCV from Fyers.
-                     Must have columns: timestamp, open, high, low, close, volume
+            df_5min:  DataFrame with AT LEAST 30 rows of 5-min OHLCV from Fyers.
+                      Must have columns: timestamp, open, high, low, close, volume
+            user_qty: User-defined qty from GUI (0 = auto calculate via calc_qty)
 
         Returns:
             dict with trade details  OR  None (no signal / filter blocked it).
@@ -205,6 +206,14 @@ class BankBeesScalper:
         entry = round(float(last['close']), 2)
         self._last_signal_time = now
 
+        # ── QTY: User qty ਵਰਤੋ, ਨਹੀਂ ਤਾਂ calc_qty fallback ──────────
+        if user_qty and user_qty > 0:
+            final_qty = int(user_qty)
+            logger.info(f"[BankBeesScalper] User QTY override: {final_qty}")
+        else:
+            final_qty = self.calc_qty(entry)
+            logger.info(f"[BankBeesScalper] Auto QTY (calc_qty): {final_qty}")
+
         signal = {
             'symbol'     : self.SYMBOL,
             'signal'     : 'BUY',
@@ -214,7 +223,7 @@ class BankBeesScalper:
             'prob'       : round(prob * 100, 1),
             'time'       : now,
             'exit_time'  : now + pd.Timedelta(minutes=30),
-            'qty'        : self.calc_qty(entry),
+            'qty'        : final_qty,
         }
 
         logger.info("[BankBeesScalper] SIGNAL FIRED >>> %s", signal)

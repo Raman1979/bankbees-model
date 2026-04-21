@@ -1,6 +1,6 @@
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# gui.py v3.1 — BankBees ML Scalper Panel Added
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# gui.py v3.2 — BankBees User QTY Input Added
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 import threading, time, json, os, csv, math
 from datetime import datetime
 from flask import Flask, jsonify, request, render_template_string
@@ -29,6 +29,7 @@ bankbees_state = {
     "target"     : 0.0,
     "sl"         : 0.0,
     "qty"        : 0,
+    "user_qty"   : 10,      # ← User-defined qty (default 10)
     "exit_time"  : "—",
     "logs"       : [],
     "order_id"   : "—",
@@ -362,6 +363,11 @@ def api_bb_start():
         config = load_config()
         bankbees_scalper_obj = BankBeesMLScalper(config)
         model_ok = bankbees_scalper_obj.scalper.model is not None
+
+        # ── Saved user_qty restore ਕਰੋ ────────────────────────────
+        saved_qty = bankbees_state.get("user_qty", 10)
+        bankbees_scalper_obj.set_user_qty(saved_qty)
+
         stop_evt = threading.Event()
         t = threading.Thread(target=bankbees_loop, args=(stop_evt,), daemon=True)
         bb_update(running=True, model_ok=model_ok, _stop_evt=stop_evt, _thread=t)
@@ -387,6 +393,28 @@ def api_bb_close():
     bb_update(in_trade=False, signal="—", entry=0, target=0, sl=0, qty=0, order_id="—")
     bb_log("Trade manually closed ✅", "warn")
     return jsonify({"ok": True})
+
+# ── ✅ NEW: User QTY Set Route ────────────────────────────────────────
+@app.route("/api/bankbees/set_qty", methods=["POST"])
+def api_bb_set_qty():
+    """GUI ਤੋਂ user qty save + scalper ਨੂੰ apply ਕਰੋ"""
+    global bankbees_scalper_obj
+    data = request.json or {}
+    try:
+        qty = int(data.get("qty", 10))
+        qty = max(qty, 1)   # minimum 1
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "msg": "ਸਹੀ number ਦਿਓ"})
+
+    # State ਵਿੱਚ save ਕਰੋ (restart ਤੋਂ ਬਾਅਦ ਵੀ restore ਹੋਵੇ)
+    bb_update(user_qty=qty)
+
+    # ਜੇ scalper ਚੱਲ ਰਿਹਾ ਹੈ ਤਾਂ live update ਕਰੋ
+    if bankbees_scalper_obj:
+        bankbees_scalper_obj.set_user_qty(qty)
+
+    bb_log(f"User QTY set → {qty} ✅", "success")
+    return jsonify({"ok": True, "qty": qty})
 
 @app.route("/api/add_symbol", methods=["POST"])
 def api_add_symbol():
@@ -611,6 +639,13 @@ input:focus,select:focus{outline:none;border-color:#2196f3;}
 .bb-signal-hold{color:#445566;font-size:18px;font-weight:700;}
 .bb-prob-bar{height:6px;background:#1a3a5a;border-radius:3px;margin-top:4px;}
 .bb-prob-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#1565c0,#00e676);transition:width .5s;}
+/* ✅ Qty input — BB header ਵਿੱਚ */
+.bb-qty-wrap{display:flex;align-items:center;gap:6px;background:#071220;border:1px solid #1a5a8a;border-radius:8px;padding:4px 10px;}
+.bb-qty-wrap label{font-size:10px;color:#4a7aaa;text-transform:uppercase;white-space:nowrap;margin:0;}
+.bb-qty-input{background:transparent;border:none;color:#ffc107;font-size:14px;font-weight:700;width:60px;text-align:center;padding:0;}
+.bb-qty-input:focus{outline:none;color:#ffeb3b;}
+.bb-qty-set-btn{background:#1a3a5a;border:1px solid #2196f3;color:#2196f3;border-radius:5px;padding:2px 8px;font-size:11px;cursor:pointer;white-space:nowrap;}
+.bb-qty-set-btn:hover{background:#2196f3;color:#fff;}
 .metric{text-align:center;padding:6px 4px;}
 .metric-val{font-size:17px;font-weight:600;}
 .metric-lbl{font-size:10px;color:#666;text-transform:uppercase;}
@@ -738,6 +773,15 @@ input:focus,select:focus{outline:none;border-color:#2196f3;}
       <span id="bb-status-badge" class="badge-stop">STOPPED</span>
       <span id="bb-model-badge" class="badge-model-no">NO MODEL</span>
       <span style="color:#2a4a6a;font-size:11px">NSE:BANKBEES-EQ · CNC · 5min</span>
+
+      <!-- ✅ QTY INPUT BOX — BB Header ਵਿੱਚ -->
+      <div class="bb-qty-wrap" title="Order qty — 0 ਛੱਡੋ auto calculate ਲਈ">
+        <label>QTY</label>
+        <input type="number" id="bb-qty-input" class="bb-qty-input" value="10" min="1" max="9999"
+               onkeydown="if(event.key==='Enter') bbSetQty()">
+        <button class="bb-qty-set-btn" onclick="bbSetQty()">Set ✓</button>
+      </div>
+
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="bb-last-check" style="color:#2a4a6a;font-size:11px">Last: —</span>
         <button id="bb-start-btn" class="btn-g" onclick="bbStart()">▶ Start</button>
@@ -780,7 +824,7 @@ input:focus,select:focus{outline:none;border-color:#2196f3;}
         </div>
         <div class="col">
           <div class="bb-metric">
-            <div class="bb-metric-lbl">Qty</div>
+            <div class="bb-metric-lbl">Qty Used</div>
             <div id="bb-qty" class="bb-metric-val" style="color:#ffc107">—</div>
           </div>
         </div>
@@ -846,6 +890,29 @@ function nf(v, dec){
   return Number(v).toLocaleString("en-IN", {minimumFractionDigits:dec, maximumFractionDigits:dec});
 }
 
+// ── ✅ BankBees QTY Set ──────────────────────────────────────────────
+function bbSetQty(){
+  var inp = document.getElementById("bb-qty-input");
+  var qty = parseInt(inp.value) || 10;
+  qty = Math.max(qty, 1);
+  inp.value = qty;
+  fetch("/api/bankbees/set_qty", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({qty: qty})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.ok){
+      // ✅ feedback — input border flash ਹਰਾ
+      inp.style.color = "#4caf50";
+      setTimeout(function(){ inp.style.color = "#ffc107"; }, 1500);
+    } else {
+      alert("QTY set ਫੇਲ: " + d.msg);
+    }
+  });
+}
+
 // ── BankBees Controls ───────────────────────────────────────────────
 function bbStart(){
   fetch("/api/bankbees/start", {method:"POST"})
@@ -897,6 +964,12 @@ function renderBankBees(bb){
   var itEl = document.getElementById("bb-in-trade");
   itEl.textContent  = bb.in_trade ? "YES 🔴" : "NO";
   itEl.style.color  = bb.in_trade ? "#f44336" : "#4caf50";
+
+  // ✅ Qty input sync — ਜੇ server ਤੋਂ user_qty ਆਵੇ ਤਾਂ input update ਕਰੋ
+  var qtyInp = document.getElementById("bb-qty-input");
+  if(bb.user_qty && document.activeElement !== qtyInp){
+    qtyInp.value = bb.user_qty;
+  }
 
   // Logs
   var logBox = document.getElementById("bb-log-box");
@@ -1171,7 +1244,6 @@ function poll(){
   fetch("/api/status")
     .then(function(r){ return r.json(); })
     .then(function(d){
-      // BankBees panel
       renderBankBees(d.bankbees);
 
       var syms = d.symbols || {};
@@ -1243,7 +1315,7 @@ if __name__ == "__main__":
         print("  Auto-login skip: " + str(e))
 
     print("\n" + "="*45)
-    print("  Nifty Multi-Bot GUI v3.1 — BankBees ML")
+    print("  Nifty Multi-Bot GUI v3.2 — BankBees User QTY")
     print("="*45)
     print("  http://localhost:5000")
     print("="*45 + "\n")
